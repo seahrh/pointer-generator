@@ -59,7 +59,7 @@ def calc_running_avg_loss(loss, running_avg_loss, summary_writer, step, decay=0.
     return running_avg_loss
 
 
-def __restore_best_model(log_root, conf):
+def __restore_best_model(conf):
     """Load bestmodel file from eval directory, add variables for adagrad, and save to train directory"""
     log.info("Restoring bestmodel for training...")
 
@@ -71,12 +71,12 @@ def __restore_best_model(log_root, conf):
     # Restore the best model from eval dir
     saver = tf.train.Saver([v for v in tf.global_variables() if "Adagrad" not in v.name])
     log.info("Restoring all non-adagrad variables from best model in eval dir...")
-    curr_ckpt = util.load_ckpt(saver, sess, log_root=log_root, ckpt_dir="eval")
+    curr_ckpt = util.load_ckpt(saver, sess, log_root=conf.model_dir, ckpt_dir="eval")
     log.info("Restored %s." % curr_ckpt)
 
     # Save this model to train dir and quit
     new_model_name = curr_ckpt.split("/")[-1].replace("bestmodel", "model")
-    new_fname = os.path.join(log_root, "train", new_model_name)
+    new_fname = os.path.join(conf.model_dir, "train", new_model_name)
     log.info("Saving model to %s..." % new_fname)
     new_saver = tf.train.Saver()  # this saver saves all variables that now exist, including Adagrad variables
     new_saver.save(sess, new_fname)
@@ -84,7 +84,7 @@ def __restore_best_model(log_root, conf):
     exit()
 
 
-def __convert_to_coverage_model(log_root, conf):
+def __convert_to_coverage_model(conf):
     """Load non-coverage checkpoint, add initialized extra variables for coverage, and save as new checkpoint"""
     log.info("converting non-coverage model to coverage model..")
 
@@ -96,7 +96,7 @@ def __convert_to_coverage_model(log_root, conf):
     # load all non-coverage weights from checkpoint
     saver = tf.train.Saver([v for v in tf.global_variables() if "coverage" not in v.name and "Adagrad" not in v.name])
     log.info("restoring non-coverage variables...")
-    curr_ckpt = util.load_ckpt(saver, sess, log_root=log_root)
+    curr_ckpt = util.load_ckpt(saver, sess, log_root=conf.model_dir)
     log.info("restored.")
 
     # save this model and quit
@@ -111,7 +111,6 @@ def __convert_to_coverage_model(log_root, conf):
 def setup_training(
         model,
         batcher,
-        log_root,
         convert_to_coverage_model,
         coverage,
         restore_best_model,
@@ -120,7 +119,7 @@ def setup_training(
         conf
 ):
     """Does setup before starting training (run_training)"""
-    train_dir = os.path.join(log_root, "train")
+    train_dir = os.path.join(conf.model_dir, "train")
     if not os.path.exists(train_dir):
         os.makedirs(train_dir)
     model.build_graph()  # build the graph
@@ -129,9 +128,9 @@ def setup_training(
         To convert your non-coverage model to a coverage model, 
         run with convert_to_coverage_model=True and coverage=True\
         """
-        __convert_to_coverage_model(log_root, conf=conf)
+        __convert_to_coverage_model(conf=conf)
     if restore_best_model:
-        __restore_best_model(log_root, conf=conf)
+        __restore_best_model(conf=conf)
     try:
         # this is an infinite loop until interrupted
         run_training(model, batcher, train_dir,
@@ -186,7 +185,7 @@ def run_training(model, batcher, train_dir, coverage, debug, max_step, conf):
             summary_writer.add_summary(summaries, train_step)  # write the summaries
 
 
-def run_eval(model, batcher, log_root, coverage, conf):
+def run_eval(model, batcher, coverage, conf):
     """
     Repeatedly runs eval iterations, logging to screen and writing summaries.
     Saves the model with the best loss seen so far.
@@ -194,7 +193,7 @@ def run_eval(model, batcher, log_root, coverage, conf):
     model.build_graph()  # build the graph
     saver = tf.train.Saver(max_to_keep=3)  # we will keep 3 best checkpoints at a time
     sess = tf.Session(config=conf.session_config)
-    eval_dir = os.path.join(log_root, "eval")  # make a subdir of the root dir for eval data
+    eval_dir = os.path.join(conf.model_dir, "eval")  # make a subdir of the root dir for eval data
     bestmodel_save_path = os.path.join(eval_dir, 'bestmodel')  # this is where checkpoints of best models are saved
     summary_writer = tf.summary.FileWriter(eval_dir)
     # the eval job keeps a smoother, running average loss to tell it when to implement early stopping
@@ -202,7 +201,7 @@ def run_eval(model, batcher, log_root, coverage, conf):
     best_loss = None  # will hold the best loss achieved so far
 
     while True:
-        _ = util.load_ckpt(saver, sess, log_root=log_root)  # load a new checkpoint
+        _ = util.load_ckpt(saver, sess, log_root=conf.model_dir)  # load a new checkpoint
         batch = batcher.next_batch()  # get the next batch
 
         # run eval on the batch
@@ -313,14 +312,12 @@ def __main(
         mode=mode,
         pointer_gen=pointer_gen,
         coverage=coverage,
-        log_root=log_root,
         conf=conf
     )
     if mode == Modes.TRAIN:
         setup_training(
             model,
             batcher,
-            log_root=log_root,
             convert_to_coverage_model=convert_to_coverage_model,
             coverage=coverage,
             restore_best_model=restore_best_model,
@@ -329,12 +326,11 @@ def __main(
             conf=conf
         )
     elif mode == Modes.EVAL:
-        run_eval(model, batcher, log_root=log_root, coverage=coverage, conf=conf)
+        run_eval(model, batcher, coverage=coverage, conf=conf)
     elif mode == Modes.PREDICT:
         decoder = BeamSearchDecoder(model, batcher, vocab,
                                     hps=hps,
                                     single_pass=single_pass,
-                                    log_root=log_root,
                                     pointer_gen=pointer_gen,
                                     data_path=data_path,
                                     beam_size=beam_size,

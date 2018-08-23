@@ -31,13 +31,12 @@ class SummarizationModel(object):
     Supports both baseline mode, pointer-generator mode, and coverage
     """
 
-    def __init__(self, hps, vocab, mode, pointer_gen, coverage, log_root, conf):
+    def __init__(self, hps, vocab, mode, pointer_gen, coverage, conf):
         self._hps = hps
         self._vocab = vocab
         self._mode = mode
         self._pointer_gen = pointer_gen
         self._coverage = coverage
-        self._log_root = log_root
         # The model is configured with max_dec_steps=1
         # because we only ever run one step of the decoder at a time (to do beam search).
         # Note that the batcher is initialized with max_dec_steps equal to e.g. 100
@@ -247,7 +246,7 @@ class SummarizationModel(object):
                 embedding = tf.get_variable('embedding', [vsize, hps.emb_dim], dtype=tf.float32,
                                             initializer=self.trunc_norm_init)
                 if self._mode == "train":
-                    self._add_emb_vis(embedding, log_root=self._log_root)  # add to tensorboard
+                    self._add_emb_vis(embedding, log_root=self._conf.model_dir)  # add to tensorboard
                 emb_enc_inputs = tf.nn.embedding_lookup(embedding,
                                                         self._enc_batch)  # tensor with shape (batch_size, max_enc_steps, emb_size)
                 emb_dec_inputs = [tf.nn.embedding_lookup(embedding, x) for x in tf.unstack(self._dec_batch,
