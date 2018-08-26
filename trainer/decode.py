@@ -35,7 +35,18 @@ SECS_UNTIL_NEW_CKPT = 60  # max number of seconds before loading new checkpoint
 class BeamSearchDecoder(object):
     """Beam search decoder."""
 
-    def __init__(self, model, batcher, vocab, hps, single_pass, log_root, pointer_gen, data_path, beam_size):
+    def __init__(
+            self,
+            model,
+            batcher,
+            vocab,
+            hps,
+            single_pass,
+            pointer_gen,
+            data_path,
+            beam_size,
+            conf
+    ):
         """Initialize decoder.
 
         Args:
@@ -49,15 +60,15 @@ class BeamSearchDecoder(object):
         self._vocab = vocab
         self._hps = hps
         self._single_pass = single_pass
-        self._log_root = log_root
         self._pointer_gen = pointer_gen
         self._data_path = data_path
         self._beam_size = beam_size
         self._saver = tf.train.Saver()  # we use this to load checkpoints for decoding
-        self._sess = tf.Session(config=util.get_config())
+        self._sess = tf.Session(config=conf.session_config)
+        self._conf = conf
 
         # Load an initial checkpoint to use for decoding
-        ckpt_path = util.load_ckpt(self._saver, self._sess, log_root=self._log_root)
+        ckpt_path = util.load_ckpt(self._saver, self._sess, log_root=self._conf.model_dir)
 
         if self._single_pass:
             # Make a descriptive decode directory name
@@ -70,12 +81,12 @@ class BeamSearchDecoder(object):
                 min_dec_steps=hps.min_dec_steps,
                 max_dec_steps=hps.max_dec_steps
             )
-            self._decode_dir = os.path.join(self._log_root, dir_name)
+            self._decode_dir = os.path.join(self._conf.model_dir, dir_name)
             if os.path.exists(self._decode_dir):
                 raise Exception("single_pass decode directory %s should not already exist" % self._decode_dir)
 
         else:  # Generic decode dir name
-            self._decode_dir = os.path.join(self._log_root, Modes.PREDICT)
+            self._decode_dir = os.path.join(self._conf.model_dir, Modes.PREDICT)
 
         # Make the decode dir if necessary
         if not os.path.exists(self._decode_dir): os.mkdir(self._decode_dir)
@@ -83,12 +94,15 @@ class BeamSearchDecoder(object):
         if self._single_pass:
             # Make the dirs to contain output written in the correct format for pyrouge
             self._rouge_ref_dir = os.path.join(self._decode_dir, "reference")
-            if not os.path.exists(self._rouge_ref_dir): os.mkdir(self._rouge_ref_dir)
+            if not os.path.exists(self._rouge_ref_dir):
+                os.mkdir(self._rouge_ref_dir)
             self._rouge_dec_dir = os.path.join(self._decode_dir, "decoded")
-            if not os.path.exists(self._rouge_dec_dir): os.mkdir(self._rouge_dec_dir)
+            if not os.path.exists(self._rouge_dec_dir):
+                os.mkdir(self._rouge_dec_dir)
 
     def decode(self):
-        """Decode examples until data is exhausted (if FLAGS.single_pass) and return, or decode indefinitely, loading latest checkpoint at regular intervals"""
+        """Decode examples until data is exhausted (if FLAGS.single_pass) and return,
+        or decode indefinitely, loading latest checkpoint at regular intervals"""
         t0 = time.time()
         counter = 0
         while True:
@@ -97,7 +111,7 @@ class BeamSearchDecoder(object):
                 assert self._single_pass, "Dataset exhausted, but we are not in single_pass mode"
                 log.info("Decoder has finished reading dataset for single_pass.")
                 log.info("Output has been saved in %s and %s. Now starting ROUGE eval...", self._rouge_ref_dir,
-                                self._rouge_dec_dir)
+                         self._rouge_dec_dir)
                 results_dict = rouge_eval(self._rouge_ref_dir, self._rouge_dec_dir)
                 rouge_log(results_dict, self._decode_dir)
                 return
@@ -147,7 +161,7 @@ class BeamSearchDecoder(object):
                     log.info(
                         'We\'ve been decoding with same checkpoint for %i seconds. Time to load new checkpoint',
                         t1 - t0)
-                    _ = util.load_ckpt(self._saver, self._sess, log_root=self._log_root)
+                    _ = util.load_ckpt(self._saver, self._sess, log_root=self._conf.model_dir)
                     t0 = time.time()
 
     def write_for_rouge(self, reference_sents, decoded_words, ex_index):
@@ -242,7 +256,8 @@ def rouge_log(results_dict, dir_to_write):
 
 
 def get_decode_dir_name(ckpt_name, data_path, beam_size, max_enc_steps, min_dec_steps, max_dec_steps):
-    """Make a descriptive name for the decode dir, including the name of the checkpoint we use to decode. This is called in single_pass mode."""
+    """Make a descriptive name for the decode dir,
+    including the name of the checkpoint we use to decode. This is called in single_pass mode."""
 
     if "train" in data_path:
         dataset = "train"

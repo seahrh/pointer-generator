@@ -59,24 +59,24 @@ def calc_running_avg_loss(loss, running_avg_loss, summary_writer, step, decay=0.
     return running_avg_loss
 
 
-def __restore_best_model(log_root):
+def __restore_best_model(conf):
     """Load bestmodel file from eval directory, add variables for adagrad, and save to train directory"""
     log.info("Restoring bestmodel for training...")
 
     # Initialize all vars in the model
-    sess = tf.Session(config=util.get_config())
+    sess = tf.Session(config=conf.session_config)
     log.info("Initializing all variables...")
     sess.run(tf.global_variables_initializer())
 
     # Restore the best model from eval dir
     saver = tf.train.Saver([v for v in tf.global_variables() if "Adagrad" not in v.name])
     log.info("Restoring all non-adagrad variables from best model in eval dir...")
-    curr_ckpt = util.load_ckpt(saver, sess, log_root=log_root, ckpt_dir="eval")
+    curr_ckpt = util.load_ckpt(saver, sess, log_root=conf.model_dir, ckpt_dir="eval")
     log.info("Restored %s." % curr_ckpt)
 
     # Save this model to train dir and quit
     new_model_name = curr_ckpt.split("/")[-1].replace("bestmodel", "model")
-    new_fname = os.path.join(log_root, "train", new_model_name)
+    new_fname = os.path.join(conf.model_dir, "train", new_model_name)
     log.info("Saving model to %s..." % new_fname)
     new_saver = tf.train.Saver()  # this saver saves all variables that now exist, including Adagrad variables
     new_saver.save(sess, new_fname)
@@ -84,19 +84,19 @@ def __restore_best_model(log_root):
     exit()
 
 
-def __convert_to_coverage_model(log_root):
+def __convert_to_coverage_model(conf):
     """Load non-coverage checkpoint, add initialized extra variables for coverage, and save as new checkpoint"""
     log.info("converting non-coverage model to coverage model..")
 
     # initialize an entire coverage model from scratch
-    sess = tf.Session(config=util.get_config())
+    sess = tf.Session(config=conf.session_config)
     log.info("initializing everything...")
     sess.run(tf.global_variables_initializer())
 
     # load all non-coverage weights from checkpoint
     saver = tf.train.Saver([v for v in tf.global_variables() if "coverage" not in v.name and "Adagrad" not in v.name])
     log.info("restoring non-coverage variables...")
-    curr_ckpt = util.load_ckpt(saver, sess, log_root=log_root)
+    curr_ckpt = util.load_ckpt(saver, sess, log_root=conf.model_dir)
     log.info("restored.")
 
     # save this model and quit
@@ -111,16 +111,15 @@ def __convert_to_coverage_model(log_root):
 def setup_training(
         model,
         batcher,
-        log_root,
         convert_to_coverage_model,
         coverage,
         restore_best_model,
         debug,
         max_step,
-        is_chief
+        conf
 ):
     """Does setup before starting training (run_training)"""
-    train_dir = os.path.join(log_root, "train")
+    train_dir = os.path.join(conf.model_dir, "train")
     if not os.path.exists(train_dir):
         os.makedirs(train_dir)
     model.build_graph()  # build the graph
@@ -129,27 +128,27 @@ def setup_training(
         To convert your non-coverage model to a coverage model, 
         run with convert_to_coverage_model=True and coverage=True\
         """
-        __convert_to_coverage_model(log_root)
+        __convert_to_coverage_model(conf=conf)
     if restore_best_model:
-        __restore_best_model(log_root)
+        __restore_best_model(conf=conf)
     try:
         # this is an infinite loop until interrupted
         run_training(model, batcher, train_dir,
-                     coverage=coverage, debug=debug, max_step=max_step, is_chief=is_chief)
+                     coverage=coverage, debug=debug, max_step=max_step, conf=conf)
     except KeyboardInterrupt:
         log.info("Caught keyboard interrupt on worker. Stopping...")
 
 
-def __train_session(train_dir, is_chief, debug):
+def __train_session(train_dir, debug, conf):
     sess = tf.train.MonitoredTrainingSession(
         checkpoint_dir=train_dir,  # required to restore variables!
         summary_dir=train_dir,
-        is_chief=True,
+        is_chief=conf.is_chief,
         save_summaries_secs=60,
         save_checkpoint_secs=60,
         max_wait_secs=60,
         stop_grace_period_secs=60,
-        config=util.get_config(),
+        config=conf.session_config,
         scaffold=tf.train.Scaffold(
             saver=tf.train.Saver(max_to_keep=3)
         )
@@ -160,11 +159,11 @@ def __train_session(train_dir, is_chief, debug):
     return sess
 
 
-def run_training(model, batcher, train_dir, coverage, debug, max_step, is_chief):
+def run_training(model, batcher, train_dir, coverage, debug, max_step, conf):
     """Repeatedly runs training iterations, logging loss to screen and writing summaries"""
     log.debug("starting run_training")
     summary_writer = tf.summary.FileWriterCache.get(train_dir)
-    with __train_session(train_dir=train_dir, is_chief=is_chief, debug=debug) as sess:
+    with __train_session(train_dir=train_dir, debug=debug, conf=conf) as sess:
         train_step = 0
         # repeats until max_step is reached
         while not sess.should_stop() and train_step <= max_step:
@@ -186,15 +185,15 @@ def run_training(model, batcher, train_dir, coverage, debug, max_step, is_chief)
             summary_writer.add_summary(summaries, train_step)  # write the summaries
 
 
-def run_eval(model, batcher, log_root, coverage):
+def run_eval(model, batcher, coverage, conf):
     """
     Repeatedly runs eval iterations, logging to screen and writing summaries.
     Saves the model with the best loss seen so far.
     """
     model.build_graph()  # build the graph
     saver = tf.train.Saver(max_to_keep=3)  # we will keep 3 best checkpoints at a time
-    sess = tf.Session(config=util.get_config())
-    eval_dir = os.path.join(log_root, "eval")  # make a subdir of the root dir for eval data
+    sess = tf.Session(config=conf.session_config)
+    eval_dir = os.path.join(conf.model_dir, "eval")  # make a subdir of the root dir for eval data
     bestmodel_save_path = os.path.join(eval_dir, 'bestmodel')  # this is where checkpoints of best models are saved
     summary_writer = tf.summary.FileWriter(eval_dir)
     # the eval job keeps a smoother, running average loss to tell it when to implement early stopping
@@ -202,7 +201,7 @@ def run_eval(model, batcher, log_root, coverage):
     best_loss = None  # will hold the best loss achieved so far
 
     while True:
-        _ = util.load_ckpt(saver, sess, log_root=log_root)  # load a new checkpoint
+        _ = util.load_ckpt(saver, sess, log_root=conf.model_dir)  # load a new checkpoint
         batch = batcher.next_batch()  # get the next batch
 
         # run eval on the batch
@@ -294,17 +293,9 @@ def __main(
     log.info('Starting seq2seq_attention in %s mode...', mode)
     log_root = __log_root(log_root, exp_name, mode)
     vocab = Vocab(vocab_path, vocab_size)  # create a vocabulary
-    tf_config = util.tf_config()
     hps = __hparams(**hparams)
-    log.info(f'hps={repr(hps)}\ntf_config={repr(tf_config)}')
-    conf = tf.estimator.RunConfig(
-        model_dir=log_root,
-        session_config=util.get_config(),
-        save_checkpoints_secs=60,
-        save_summary_steps=100,
-        keep_checkpoint_max=3,
-        tf_random_seed=random_seed
-    )
+    conf = util.run_config(model_dir=log_root, random_seed=random_seed)
+    log.info(f'hps={repr(hps)}\nconf={util.repr_run_config(conf)}')
 
     # Create a batcher object that will create minibatches of data
     batcher = Batcher(
@@ -321,31 +312,29 @@ def __main(
         mode=mode,
         pointer_gen=pointer_gen,
         coverage=coverage,
-        log_root=log_root,
-        cluster_spec=tf_config['cluster_spec']
+        conf=conf
     )
     if mode == Modes.TRAIN:
         setup_training(
             model,
             batcher,
-            log_root=log_root,
             convert_to_coverage_model=convert_to_coverage_model,
             coverage=coverage,
             restore_best_model=restore_best_model,
             debug=debug,
             max_step=hps.max_step,
-            is_chief=tf_config['is_chief']
+            conf=conf
         )
     elif mode == Modes.EVAL:
-        run_eval(model, batcher, log_root=log_root, coverage=coverage)
+        run_eval(model, batcher, coverage=coverage, conf=conf)
     elif mode == Modes.PREDICT:
         decoder = BeamSearchDecoder(model, batcher, vocab,
                                     hps=hps,
                                     single_pass=single_pass,
-                                    log_root=log_root,
                                     pointer_gen=pointer_gen,
                                     data_path=data_path,
-                                    beam_size=beam_size
+                                    beam_size=beam_size,
+                                    conf=conf
                                     )
         # decode indefinitely
         # (unless single_pass=True, in which case deocde the dataset exactly once)

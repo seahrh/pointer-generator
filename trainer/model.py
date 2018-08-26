@@ -31,19 +31,20 @@ class SummarizationModel(object):
     Supports both baseline mode, pointer-generator mode, and coverage
     """
 
-    def __init__(self, hps, vocab, mode, pointer_gen, coverage, log_root, cluster_spec):
+    def __init__(self, hps, vocab, mode, pointer_gen, coverage, conf):
         self._hps = hps
         self._vocab = vocab
         self._mode = mode
         self._pointer_gen = pointer_gen
         self._coverage = coverage
-        self._log_root = log_root
         # The model is configured with max_dec_steps=1
         # because we only ever run one step of the decoder at a time (to do beam search).
         # Note that the batcher is initialized with max_dec_steps equal to e.g. 100
         # because the batches need to contain the full summaries
         self._max_dec_steps = 1 if mode == Modes.PREDICT else self._hps.max_dec_steps
-        self._cluster_spec = cluster_spec
+        self._conf = conf
+        self.global_step = None
+        self._summaries = None
 
     def _add_placeholders(self):
         """Add placeholders to the graph. These are entry points for any input data."""
@@ -166,9 +167,7 @@ class SummarizationModel(object):
             self._enc_states,
             self._enc_padding_mask,
             cell,
-            initial_state_attention=(
-                self._mode == Modes.PREDICT
-            ),
+            initial_state_attention=(self._mode == Modes.PREDICT),
             pointer_gen=self._pointer_gen,
             use_coverage=self._coverage,
             prev_coverage=prev_coverage
@@ -247,7 +246,7 @@ class SummarizationModel(object):
                 embedding = tf.get_variable('embedding', [vsize, hps.emb_dim], dtype=tf.float32,
                                             initializer=self.trunc_norm_init)
                 if self._mode == "train":
-                    self._add_emb_vis(embedding, log_root=self._log_root)  # add to tensorboard
+                    self._add_emb_vis(embedding, log_root=self._conf.model_dir)  # add to tensorboard
                 emb_enc_inputs = tf.nn.embedding_lookup(embedding,
                                                         self._enc_batch)  # tensor with shape (batch_size, max_enc_steps, emb_size)
                 emb_dec_inputs = [tf.nn.embedding_lookup(embedding, x) for x in tf.unstack(self._dec_batch,
@@ -337,29 +336,38 @@ class SummarizationModel(object):
         gradients = tf.gradients(loss_to_minimize, tvars, aggregation_method=tf.AggregationMethod.EXPERIMENTAL_TREE)
 
         # Clip the gradients
-        with tf.device(tf.train.replica_device_setter(cluster=self._cluster_spec)):
-            grads, global_norm = tf.clip_by_global_norm(gradients, self._hps.max_grad_norm)
+        grads, global_norm = tf.clip_by_global_norm(gradients, self._hps.max_grad_norm)
 
         # Add a summary
         tf.summary.scalar('global_norm', global_norm)
 
         # Apply adagrad optimizer
-        optimizer = tf.train.AdagradOptimizer(self._hps.lr, initial_accumulator_value=self._hps.adagrad_init_acc)
-        with tf.device(tf.train.replica_device_setter(cluster=self._cluster_spec)):
-            self._train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=self.global_step,
-                                                       name='train_step')
+        optimizer = tf.train.AdagradOptimizer(
+            self._hps.lr,
+            initial_accumulator_value=self._hps.adagrad_init_acc
+        )
+        self._train_op = optimizer.apply_gradients(
+            zip(grads, tvars),
+            global_step=self.global_step,
+            name='train_step'
+        )
 
     def build_graph(self):
         """Add the placeholders, model, global step, train_op and summaries to the graph"""
         log.info('Building graph...')
         t0 = time.time()
-        self._add_placeholders()
-        with tf.device(tf.train.replica_device_setter(cluster=self._cluster_spec)):
+        with tf.device(tf.train.replica_device_setter(cluster=self._conf.cluster_spec)):
+            self._add_placeholders()
             self._add_seq2seq()
-        self.global_step = tf.Variable(0, name='global_step', trainable=False)
-        if self._mode == 'train':
-            self._add_train_op()
-        self._summaries = tf.summary.merge_all()
+            self.global_step = tf.get_variable(
+                'global_step',
+                dtype=tf.int32,
+                initializer=tf.constant(0),
+                trainable=False
+            )
+            if self._mode == Modes.TRAIN:
+                self._add_train_op()
+            self._summaries = tf.summary.merge_all()
         t1 = time.time()
         log.info('Time to build graph: %i seconds', t1 - t0)
 
