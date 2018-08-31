@@ -6,7 +6,7 @@ def generate_model_fn():
     def _model_fn(features, labels, mode, params, config):
         modes = [Modes.TRAIN, Modes.EVAL, Modes.PREDICT]
         if mode not in modes:
-            raise ValueError(f'mode must be one of {repr(modes)} but mode={mode}')
+            raise ValueError('mode must be one of {} but mode={}'.format(repr(modes), mode))
         if mode == Modes.TRAIN:
             loss = 0  # TODO filler
             grads = [0]  # TODO filler

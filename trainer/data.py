@@ -16,12 +16,13 @@
 
 """This file contains code to read the train/eval/test data from file and process it, and read the vocab data from file and process it"""
 
-import glob
+from tensorflow.gfile import Glob
 import random
 import struct
 import csv
 from tensorflow.core.example import example_pb2
 from tensorflow import logging as log
+from tensorflow.python.lib.io import file_io
 
 # <s> and </s> are used in the data files to segment the abstracts into sentences. They don't receive vocab ids.
 SENTENCE_START = '<s>'
@@ -56,7 +57,7 @@ class Vocab(object):
             self._count += 1
 
         # Read the vocab file and add words up to max_size
-        with open(vocab_file, 'r', encoding='utf8') as vocab_f:
+        with file_io.FileIO(vocab_file, 'r') as vocab_f:
             for line in vocab_f:
                 pieces = line.split()
                 if len(pieces) != 2:
@@ -102,8 +103,8 @@ class Vocab(object):
         Args:
           fpath: place to write the metadata file
         """
-        log.info("Writing word embedding metadata file to %s..." % (fpath))
-        with open(fpath, "w", encoding='utf8') as f:
+        log.info("Writing word embedding metadata file to %s..." % fpath)
+        with file_io.FileIO(fpath, "w") as f:
             fieldnames = ['word']
             writer = csv.DictWriter(f, delimiter="\t", fieldnames=fieldnames)
             for i in range(self.size()):
@@ -127,20 +128,20 @@ def example_generator(data_path, single_pass):
       Deserialized tf.Example.
     """
     while True:
-        filelist = glob.glob(data_path)  # get the list of datafiles
+        filelist = Glob(data_path)  # get the list of datafiles
         assert filelist, ('Error: Empty filelist at %s' % data_path)  # check filelist isn't empty
         if single_pass:
             filelist = sorted(filelist)
         else:
             random.shuffle(filelist)
         for f in filelist:
-            reader = open(f, 'rb')
-            while True:
-                len_bytes = reader.read(8)
-                if not len_bytes: break  # finished reading this file
-                str_len = struct.unpack('q', len_bytes)[0]
-                example_str = struct.unpack('%ds' % str_len, reader.read(str_len))[0]
-                yield example_pb2.Example.FromString(example_str)
+            with file_io.FileIO(f, 'rb') as reader:
+                while True:
+                    len_bytes = reader.read(8)
+                    if not len_bytes: break  # finished reading this file
+                    str_len = struct.unpack('q', len_bytes)[0]
+                    example_str = struct.unpack('%ds' % str_len, reader.read(str_len))[0]
+                    yield example_pb2.Example.FromString(example_str)
         if single_pass:
             log.info("example_generator completed reading all datafiles. No more data.")
             break

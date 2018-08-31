@@ -48,34 +48,6 @@ def __tf_config_json():
     return json.loads(conf)
 
 
-def __tf_config():  # TODO remove
-    """Parse TF_CONFIG to cluster_spec
-          TF_CONFIG environment variable is available when running using
-          gcloud either locally or on cloud. It has all the information required
-          to create a ClusterSpec which is important for running distributed code.
-    """
-    config_json = __tf_config_json()
-    res = {
-        'cluster_spec': None,
-        'server': None,
-        'is_chief': True
-    }
-    if config_json is None:
-        return res
-    cluster = config_json.get('cluster')
-    job_name = config_json.get('task', {}).get('type')
-    task_index = config_json.get('task', {}).get('index')
-    # If cluster information is empty run local
-    if job_name is None or task_index is None:
-        return res
-    res['cluster_spec'] = tf.train.ClusterSpec(cluster)
-    res['server'] = tf.train.Server(res['cluster_spec'],
-                                    job_name=job_name,
-                                    task_index=task_index)
-    res['is_chief'] = (job_name == 'master')
-    return res
-
-
 def __session_config():
     """Returns a tf.ConfigProto instance that has appropriate device_filters set.
     """
@@ -98,6 +70,7 @@ def __session_config():
         allow_soft_placement=True,
         log_device_placement=False,
         device_filters=device_filters,
+        operation_timeout_in_ms=120000,
         gpu_options=tf.GPUOptions(
             allow_growth=True
         )
@@ -117,24 +90,43 @@ def run_config(model_dir, random_seed):
 
 def repr_run_config(conf):
     assert isinstance(conf, tf.estimator.RunConfig)
-    return f"""tf.estimator.RunConfig(
-        model_dir={repr(conf.model_dir)},
-        cluster_spec={repr(conf.cluster_spec.as_dict())}, 
-        is_chief={repr(conf.is_chief)}, 
-        master={repr(conf.master)}, 
-        num_worker_replicas={repr(conf.num_worker_replicas)}, 
-        num_ps_replicas={repr(conf.num_ps_replicas)}, 
-        task_id={repr(conf.task_id)}, 
-        task_type={repr(conf.task_type)},
-        tf_random_seed={repr(conf.tf_random_seed)},
-        save_summary_steps={repr(conf.save_summary_steps)},
-        save_checkpoints_steps={repr(conf.save_checkpoints_steps)},
-        save_checkpoints_secs={repr(conf.save_checkpoints_secs)},
-        session_config={repr(conf.session_config)},
-        keep_checkpoint_max={repr(conf.keep_checkpoint_max)},
-        keep_checkpoint_every_n_hours={repr(conf.keep_checkpoint_every_n_hours)},
-        log_step_count_steps={repr(conf.log_step_count_steps)},
-        train_distribute={repr(conf.train_distribute)},
-        device_fn={repr(conf.device_fn)}
+    return """tf.estimator.RunConfig(
+        model_dir={},
+        cluster_spec={}, 
+        is_chief={}, 
+        master={}, 
+        num_worker_replicas={}, 
+        num_ps_replicas={}, 
+        task_id={}, 
+        task_type={},
+        tf_random_seed={},
+        save_summary_steps={},
+        save_checkpoints_steps={},
+        save_checkpoints_secs={},
+        session_config={},
+        keep_checkpoint_max={},
+        keep_checkpoint_every_n_hours={},
+        log_step_count_steps={},
+        train_distribute={},
+        device_fn={}
     )
-    """
+    """.format(
+        repr(conf.model_dir),
+        repr(conf.cluster_spec.as_dict()),
+        repr(conf.is_chief),
+        repr(conf.master),
+        repr(conf.num_worker_replicas),
+        repr(conf.num_ps_replicas),
+        repr(conf.task_id),
+        repr(conf.task_type),
+        repr(conf.tf_random_seed),
+        repr(conf.save_summary_steps),
+        repr(conf.save_checkpoints_steps),
+        repr(conf.save_checkpoints_secs),
+        repr(conf.session_config),
+        repr(conf.keep_checkpoint_max),
+        repr(conf.keep_checkpoint_every_n_hours),
+        repr(conf.log_step_count_steps),
+        repr(conf.train_distribute),
+        repr(conf.device_fn)
+    )

@@ -140,17 +140,21 @@ def setup_training(
 
 
 def __train_session(train_dir, debug, conf):
+    log.info('RunConfig is_chief={}, master={}, task_id={}'.format(
+        repr(conf.is_chief),
+        repr(conf.master),
+        repr(conf.task_id)))
     sess = tf.train.MonitoredTrainingSession(
         checkpoint_dir=train_dir,  # required to restore variables!
-        summary_dir=train_dir,
+        master=conf.master,
         is_chief=conf.is_chief,
         save_summaries_secs=60,
-        save_checkpoint_secs=60,
-        max_wait_secs=60,
+        save_checkpoint_secs=conf.save_checkpoints_secs,
+        max_wait_secs=120,
         stop_grace_period_secs=60,
         config=conf.session_config,
         scaffold=tf.train.Scaffold(
-            saver=tf.train.Saver(max_to_keep=3)
+            saver=tf.train.Saver(max_to_keep=conf.keep_checkpoint_max)
         )
     )
     if debug:  # start the tensorflow debugger
@@ -164,6 +168,7 @@ def run_training(model, batcher, train_dir, coverage, debug, max_step, conf):
     log.debug("starting run_training")
     summary_writer = tf.summary.FileWriterCache.get(train_dir)
     with __train_session(train_dir=train_dir, debug=debug, conf=conf) as sess:
+        log.debug('after MonitoredTrainingSession')
         train_step = 0
         # repeats until max_step is reached
         while not sess.should_stop() and train_step <= max_step:
@@ -172,6 +177,7 @@ def run_training(model, batcher, train_dir, coverage, debug, max_step, conf):
             t0 = time.time()
             results = model.run_train_step(sess, batch)
             t1 = time.time()
+            log.debug('after session.run')
             loss = results['loss']
             if not np.isfinite(loss):
                 raise Exception("Loss is not finite. Stopping.")
@@ -260,30 +266,18 @@ def __log_verbosity(level):
         log.set_verbosity(log.DEBUG)
 
 
-def __log_root(base_path, exp_name, mode):
-    """Change log_root to FLAGS.log_root/FLAGS.exp_name and create the dir if necessary"""
-    res = os.path.join(base_path, exp_name)
-    if not os.path.exists(res):
-        if mode == "train":
-            os.makedirs(res)
-        else:
-            raise Exception("Logdir %s doesn't exist. Run in train mode to create it." % res)
-    return res
-
-
 def __main(
+        job_dir,
         mode,
         data_path,
         vocab_path,
         vocab_size,
-        log_root,
         beam_size,
         pointer_gen,
         convert_to_coverage_model,
         coverage,
         restore_best_model,
         log_level,
-        exp_name,
         single_pass,
         random_seed,
         debug,
@@ -291,11 +285,10 @@ def __main(
 ):
     __log_verbosity(log_level)
     log.info('Starting seq2seq_attention in %s mode...', mode)
-    log_root = __log_root(log_root, exp_name, mode)
     vocab = Vocab(vocab_path, vocab_size)  # create a vocabulary
     hps = __hparams(**hparams)
-    conf = util.run_config(model_dir=log_root, random_seed=random_seed)
-    log.info(f'hps={repr(hps)}\nconf={util.repr_run_config(conf)}')
+    conf = util.run_config(model_dir=job_dir, random_seed=random_seed)
+    log.info('hps={}\nconf={}'.format(repr(hps), util.repr_run_config(conf)))
 
     # Create a batcher object that will create minibatches of data
     batcher = Batcher(
@@ -375,15 +368,11 @@ if __name__ == '__main__':
         and log the results to screen, indefinitely.\
         """)
     parser.add_argument(
-        '--log_root',
+        '--job-dir',
         type=str,
-        required=True,
-        help='Root directory for all logging.')
-    parser.add_argument(
-        '--exp_name',
-        type=str,
-        default='default_exp_name',
-        help='Name for experiment. Logs will be saved in a directory with this name, under log_root.')
+        help='GCS location to write checkpoints and export models',
+        required=True
+    )
     parser.add_argument(
         '--hidden_dim',
         type=int,
@@ -521,9 +510,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     modes = [Modes.TRAIN, Modes.EVAL, Modes.PREDICT]
     if args.mode not in modes:
-        raise ValueError(f'--mode flag must be one of {repr(modes)}')
+        raise ValueError('--mode flag must be one of {}'.format(repr(modes)))
     if args.single_pass and args.mode != Modes.PREDICT:
-        raise ValueError(f'--single_pass flag should only be True in {repr(Modes.PREDICT)} mode')
+        raise ValueError('--single_pass flag should only be True in {} mode'.format(repr(Modes.PREDICT)))
     # If in decode mode, set batch_size = beam_size
     # Reason: in decode mode, we decode one example at a time.
     # On each step, we have beam_size-many hypotheses in the beam,

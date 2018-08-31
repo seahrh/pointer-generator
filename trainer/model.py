@@ -356,18 +356,17 @@ class SummarizationModel(object):
         """Add the placeholders, model, global step, train_op and summaries to the graph"""
         log.info('Building graph...')
         t0 = time.time()
-        with tf.device(tf.train.replica_device_setter(cluster=self._conf.cluster_spec)):
-            self._add_placeholders()
-            self._add_seq2seq()
-            self.global_step = tf.get_variable(
-                'global_step',
-                dtype=tf.int32,
-                initializer=tf.constant(0),
-                trainable=False
-            )
-            if self._mode == Modes.TRAIN:
-                self._add_train_op()
-            self._summaries = tf.summary.merge_all()
+        self._add_placeholders()
+        self._add_seq2seq()
+        self.global_step = tf.get_variable(
+            'global_step',
+            dtype=tf.int32,
+            initializer=tf.constant(0),
+            trainable=False
+        )
+        if self._mode == Modes.TRAIN:
+            self._add_train_op()
+        self._summaries = tf.summary.merge_all()
         t1 = time.time()
         log.info('Time to build graph: %i seconds', t1 - t0)
 

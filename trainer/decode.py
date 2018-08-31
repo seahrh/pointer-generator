@@ -28,6 +28,7 @@ import pyrouge
 import trainer.util as util
 import logging
 from tensorflow.python.estimator.model_fn import ModeKeys as Modes
+from tensorflow.python.lib.io import file_io
 
 SECS_UNTIL_NEW_CKPT = 60  # max number of seconds before loading new checkpoint
 
@@ -192,10 +193,10 @@ class BeamSearchDecoder(object):
         ref_file = os.path.join(self._rouge_ref_dir, "%06d_reference.txt" % ex_index)
         decoded_file = os.path.join(self._rouge_dec_dir, "%06d_decoded.txt" % ex_index)
 
-        with open(ref_file, "w") as f:
+        with file_io.FileIO(ref_file, "w") as f:
             for idx, sent in enumerate(reference_sents):
                 f.write(sent) if idx == len(reference_sents) - 1 else f.write(sent + "\n")
-        with open(decoded_file, "w") as f:
+        with file_io.FileIO(decoded_file, "w") as f:
             for idx, sent in enumerate(decoded_sents):
                 f.write(sent) if idx == len(decoded_sents) - 1 else f.write(sent + "\n")
 
@@ -251,7 +252,7 @@ def rouge_log(results_dict, dir_to_write):
     log.info(log_str)  # log to screen
     results_file = os.path.join(dir_to_write, "ROUGE_results.txt")
     log.info("Writing final ROUGE results to %s...", results_file)
-    with open(results_file, "w") as f:
+    with file_io.FileIO(results_file, "w") as f:
         f.write(log_str)
 
 
