@@ -6,10 +6,10 @@ source ./venv/bin/activate
 gcloud ml-engine local train \
     --module-name trainer.task \
     --package-path trainer/ \
-    --job-dir /Users/me/googledrive/suma/log/huat \
+    --job-dir "/path/to/dir" \
     -- \
     --mode infer \
-    --data_path "/Users/me/googledrive/suma/finished_files/chunked/val_*" \
-    --vocab_path /Users/me/googledrive/suma/finished_files/vocab \
+    --data_path "/path/to/val" \
+    --vocab_path "/path/to/vocab.tsv" \
 
 deactivate

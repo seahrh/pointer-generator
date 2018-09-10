@@ -28,17 +28,17 @@ def load_ckpt(saver, sess, log_root, ckpt_dir="train"):
     and restore it to saver and sess, waiting 10 secs in the case of failure.
     Also returns checkpoint name.
     """
-    while True:
-        try:
-            latest_filename = "checkpoint_best" if ckpt_dir == "eval" else None
-            ckpt_dir = os.path.join(log_root, ckpt_dir)
-            ckpt_state = tf.train.get_checkpoint_state(ckpt_dir, latest_filename=latest_filename)
-            log.info('Loading checkpoint %s', ckpt_state.model_checkpoint_path)
-            saver.restore(sess, ckpt_state.model_checkpoint_path)
-            return ckpt_state.model_checkpoint_path
-        except:
-            log.info("Failed to load checkpoint from %s. Sleeping for %i secs...", ckpt_dir, 10)
-            time.sleep(10)
+    latest_filename = "checkpoint_best" if ckpt_dir == "eval" else None
+    ckpt_dir = os.path.join(log_root, ckpt_dir)
+    ckpt_state = tf.train.get_checkpoint_state(ckpt_dir, latest_filename=latest_filename)
+    log.info('Loading checkpoint %s', ckpt_state.model_checkpoint_path)
+    #while True:
+     #   try:
+    saver.restore(sess, ckpt_state.model_checkpoint_path)
+    return ckpt_state.model_checkpoint_path
+      #  except:
+       #     log.info("Failed to load checkpoint from %s. Sleeping for %i secs...", ckpt_dir, 10)
+        #    time.sleep(10)
 
 
 def __tf_config_json():

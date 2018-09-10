@@ -24,6 +24,30 @@ import numpy as np
 from tensorflow import logging as log
 import trainer.data as data
 from tensorflow.python.estimator.model_fn import ModeKeys as Modes
+import stringx
+
+
+def to_example(article, abstract, vocab, hps, pointer_gen):
+    article = stringx.to_str(article)
+    abstract = stringx.to_str(abstract)
+    abstract_sentences = [sent + ' .' for sent in abstract.split('.')]
+    return Example(
+        article=article,
+        abstract_sentences=abstract_sentences,
+        vocab=vocab,
+        hps=hps,
+        pointer_gen=pointer_gen
+    )
+
+
+def to_batch(articles, abstracts, vocab, hps, pointer_gen):
+    example_list = []
+    for i in range(len(articles)):
+        article = articles[i]
+        abstract = abstracts[i]
+        ex = to_example(article, abstract, vocab=vocab, hps=hps, pointer_gen=pointer_gen)
+        example_list.append(ex)
+    return Batch(example_list=example_list, hps=hps, vocab=vocab, pointer_gen=pointer_gen)
 
 
 class Example(object):
@@ -81,6 +105,12 @@ class Example(object):
         self.original_abstract = abstract
         self.original_abstract_sents = abstract_sentences
 
+    def __repr__(self):
+        return 'batcher.Example(\narticle={},\nabstract_sentences={}\n)'.format(
+            repr(self.original_article),
+            repr(self.original_abstract_sents)
+        )
+
     def get_dec_inp_targ_seqs(self, sequence, max_len, start_id, stop_id):
         """Given the reference summary as a sequence of tokens, return the input sequence for the decoder, and the target sequence which we will use to calculate loss. The sequence will be truncated if it is longer than max_len. The input sequence must start with the start_id and the target sequence must end with the stop_id (but not if it's been truncated).
 
@@ -136,6 +166,22 @@ class Batch(object):
         self.init_encoder_seq(example_list, hps)  # initialize the input to the encoder
         self.init_decoder_seq(example_list, hps)  # initialize the input and targets for the decoder
         self.store_orig_strings(example_list)  # store the original strings
+
+    def __repr__(self):
+        return """batcher.Batch(
+            pointer_gen={},
+            pad_id={},
+            enc_batch={},
+            enc_lens={},
+            enc_padding_mask={}
+        )
+        """.format(
+            repr(self.pointer_gen),
+            repr(self.pad_id),
+            repr(self.enc_batch),
+            repr(self.enc_lens),
+            repr(self.enc_padding_mask)
+        )
 
     def init_encoder_seq(self, example_list, hps):
         """Initializes the following:

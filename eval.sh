@@ -2,16 +2,16 @@
 set -x #echo on
 
 DATE=`date '+%Y%m%d_%H%M%S'`
-MAX_STEP=30
+BATCH_SIZE=64
 BUCKET_NAME="mybucket"
 EN_CORE_WEB_SM_PKG="gs://${BUCKET_NAME}/lib/en_core_web_sm-2.0.0.tar.gz"
 STRINGX_PKG="gs://${BUCKET_NAME}/lib/sgcharts-stringx-1.1.1.tar.gz"
 PACKAGES="${EN_CORE_WEB_SM_PKG},${STRINGX_PKG}"
 MODEL_NAME="huat"
-MODE="train"
+MODE="eval"
 JOB_NAME="${MODEL_NAME}_${MODE}_${DATE}"
 JOB_DIR="gs://${BUCKET_NAME}/models/${MODEL_NAME}"
-DATA_DIR="gs://${BUCKET_NAME}/data/train"
+DATA_DIR="gs://${BUCKET_NAME}/data/val"
 VOCAB_PATH="gs://${BUCKET_NAME}/data/vocab.tsv"
 
 
@@ -25,4 +25,4 @@ gcloud ml-engine jobs submit training ${JOB_NAME} \
     --mode ${MODE} \
     --data_dir ${DATA_DIR} \
     --vocab_path ${VOCAB_PATH} \
-    --max_step ${MAX_STEP}
+    --batch_size ${BATCH_SIZE}

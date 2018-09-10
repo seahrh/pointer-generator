@@ -24,6 +24,7 @@ from tensorflow import logging as log
 from trainer.attention_decoder import attention_decoder
 from tensorflow.contrib.tensorboard.plugins import projector
 from tensorflow.python.estimator.model_fn import ModeKeys as Modes
+import trainer.batcher as batcher
 
 
 class SummarizationModel(object):
@@ -43,8 +44,8 @@ class SummarizationModel(object):
         # because the batches need to contain the full summaries
         self._max_dec_steps = 1 if mode == Modes.PREDICT else self._hps.max_dec_steps
         self._conf = conf
-        self.global_step = None
         self._summaries = None
+        self._graph = None
 
     def _add_placeholders(self):
         """Add placeholders to the graph. These are entry points for any input data."""
@@ -245,7 +246,7 @@ class SummarizationModel(object):
             with tf.variable_scope('embedding'):
                 embedding = tf.get_variable('embedding', [vsize, hps.emb_dim], dtype=tf.float32,
                                             initializer=self.trunc_norm_init)
-                if self._mode == "train":
+                if self._mode == Modes.TRAIN:
                     self._add_emb_vis(embedding, log_root=self._conf.model_dir)  # add to tensorboard
                 emb_enc_inputs = tf.nn.embedding_lookup(embedding,
                                                         self._enc_batch)  # tensor with shape (batch_size, max_enc_steps, emb_size)
@@ -348,48 +349,81 @@ class SummarizationModel(object):
         )
         self._train_op = optimizer.apply_gradients(
             zip(grads, tvars),
-            global_step=self.global_step,
+            global_step=tf.train.get_global_step(),
             name='train_step'
         )
 
     def build_graph(self):
         """Add the placeholders, model, global step, train_op and summaries to the graph"""
-        log.info('Building graph...')
-        t0 = time.time()
-        self._add_placeholders()
-        self._add_seq2seq()
-        self.global_step = tf.get_variable(
-            'global_step',
-            dtype=tf.int32,
-            initializer=tf.constant(0),
-            trainable=False
+        if self._graph is None:
+            log.info('Building {} graph...'.format(self._mode))
+            t0 = time.time()
+            g = tf.Graph()
+            with g.as_default():
+                tf.train.get_or_create_global_step()
+                self._add_placeholders()
+                self._add_seq2seq()
+                if self._mode == Modes.TRAIN:
+                    self._add_train_op()
+                self._summaries = tf.summary.merge_all()
+            t1 = time.time()
+            log.info('Time to build graph: %i seconds', t1 - t0)
+            self._graph = g
+        return self._graph
+
+    def run_train_step(self, sess, next_batch):
+        """Runs one training iteration.
+        Returns a dictionary containing train op, summaries, loss, global_step and (optionally) coverage loss.
+        """
+
+        def step_fn(step_context):
+            articles, abstracts = step_context.session.run(next_batch)
+            for i in range(len(articles)):
+                article = articles[i]
+                abstract = abstracts[i]
+                log.debug('train i={}\n\narticle={}\n\nabstract={}'.format(i, repr(article), repr(abstract)))
+            batch = batcher.to_batch(
+                articles=articles,
+                abstracts=abstracts,
+                vocab=self._vocab,
+                hps=self._hps,
+                pointer_gen=self._pointer_gen
+            )
+            feed_dict = self._make_feed_dict(batch)
+            to_return = {
+                'train_op': self._train_op,
+                'summaries': self._summaries,
+                'loss': self._loss,
+                'global_step': tf.train.get_global_step()
+            }
+            if self._coverage:
+                to_return['coverage_loss'] = self._coverage_loss
+            return step_context.run_with_hooks(to_return, feed_dict)
+
+        return sess.run_step_fn(step_fn)
+
+    def run_eval_step(self, sess, next_batch):
+        """Runs one evaluation iteration.
+        Returns a dictionary containing summaries, loss, global_step and (optionally) coverage loss.
+        """
+        articles, abstracts = sess.run(next_batch)
+        for i in range(len(articles)):
+            article = articles[i]
+            abstract = abstracts[i]
+            log.debug('eval i={}\n\narticle={}\n\nabstract={}'.format(i, repr(article), repr(abstract)))
+        log.debug('eval len(articles)={}, len(abstracts)={}'.format(len(articles), len(abstracts)))
+        batch = batcher.to_batch(
+            articles=articles,
+            abstracts=abstracts,
+            vocab=self._vocab,
+            hps=self._hps,
+            pointer_gen=self._pointer_gen
         )
-        if self._mode == Modes.TRAIN:
-            self._add_train_op()
-        self._summaries = tf.summary.merge_all()
-        t1 = time.time()
-        log.info('Time to build graph: %i seconds', t1 - t0)
-
-    def run_train_step(self, sess, batch):
-        """Runs one training iteration. Returns a dictionary containing train op, summaries, loss, global_step and (optionally) coverage loss."""
-        feed_dict = self._make_feed_dict(batch)
-        to_return = {
-            'train_op': self._train_op,
-            'summaries': self._summaries,
-            'loss': self._loss,
-            'global_step': self.global_step,
-        }
-        if self._coverage:
-            to_return['coverage_loss'] = self._coverage_loss
-        return sess.run(to_return, feed_dict)
-
-    def run_eval_step(self, sess, batch):
-        """Runs one evaluation iteration. Returns a dictionary containing summaries, loss, global_step and (optionally) coverage loss."""
         feed_dict = self._make_feed_dict(batch)
         to_return = {
             'summaries': self._summaries,
             'loss': self._loss,
-            'global_step': self.global_step,
+            'global_step': tf.train.get_global_step()
         }
         if self._coverage:
             to_return['coverage_loss'] = self._coverage_loss
@@ -407,8 +441,9 @@ class SummarizationModel(object):
           dec_in_state: A LSTMStateTuple of shape ([1,hidden_dim],[1,hidden_dim])
         """
         feed_dict = self._make_feed_dict(batch, just_enc=True)  # feed the batch into the placeholders
-        (enc_states, dec_in_state, global_step) = sess.run([self._enc_states, self._dec_in_state, self.global_step],
-                                                           feed_dict)  # run the encoder
+        (enc_states, dec_in_state, global_step) = sess.run(
+            [self._enc_states, self._dec_in_state, tf.train.get_global_step()],
+            feed_dict)  # run the encoder
 
         # dec_in_state is LSTMStateTuple shape ([batch_size,hidden_dim],[batch_size,hidden_dim])
         # Given that the batch is a single example repeated, dec_in_state is identical across the batch so we just take the top row.

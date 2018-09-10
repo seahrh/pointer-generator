@@ -1,5 +1,5 @@
 trainingInput:
   scaleTier: BASIC #BASIC_GPU
   pythonVersion: "3.5"
-  runtimeVersion: "1.9"
+  runtimeVersion: "1.10"
   region: "us-east1"
